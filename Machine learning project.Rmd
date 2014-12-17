@@ -1,0 +1,122 @@
+---
+title: "Practical Machine Learning Course Project"
+output: html_document
+---
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+LOAD DATA
+
+```{r}
+if (!file.exists("pml-training.csv")) {
+        download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", destfile = "pml-training.csv")
+}
+if (!file.exists("pml-testing.csv")) {
+        download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", destfile = "pml-testing.csv")
+}
+testing <- read.csv("pml-testing.csv", sep = ",", na.strings = c("", "NA"))
+training <- read.csv("pml-training.csv", sep = ",", na.strings = c("", "NA"))
+library(caret)
+library(randomForest)
+library(plyr)
+options(warn=-1)
+```
+
+CLEANUP THE DATA
+
+```{r}
+# Removing the starting 6 columns from the training and testing datasets :
+#  'X',  'user_name', 'raw_timestamp_part_1', 'raw_timestamp_part_2', 'cvtd_timestamp', 'new_window'
+testing <- subset(testing, select=-c(1:7))
+training <- subset(training, select=-c(1:7))
+
+# Putting a Threshold value for the check on the number of occurences of 'NA' or '""' empty values in the datasets
+threshold_val <- 0.95 * dim(training)[1]
+
+# Here we will be removing the columns which are fully 'NA' or full empty or have more than 95 % NA or empty values, and include rest of the columns
+include_cols <- !apply(training, 2, function(y) sum(is.na(y)) > threshold_val || sum(y=="") > threshold_val)
+training <- training[, include_cols]
+```
+
+Further Cleaning of Data
+
+```{r}
+# Removing the columns which have very low variance values, and including the favourable ones
+nearZvar <- nearZeroVar(training, saveMetrics = TRUE)
+training <- training[ , nearZvar$nzv==FALSE] 
+dim(training)
+
+# Making a correlation matrix to remove the columns which are highly correlated with each other
+# Putting a threshold value check here as well
+corr_matrix <- abs(cor(training[,-dim(training)[2]]))
+
+# Making the default diagonal values from '1' to '0', so that these values aren't included later 
+diag(corr_matrix) <- 0
+
+# Here we will be removing the columns which are highly correlated
+correlated_col <- findCorrelation(corr_matrix, verbose = FALSE , cutoff = .95)
+training <- training[, -c(correlated_col)]
+dim(training)
+
+```
+
+Modeling the data
+
+```{r}
+set.seed(32233)
+
+# Dividing the training dataset in 2 parts with p=0.7
+inTrain = createDataPartition(training$classe, p = 0.7, list=FALSE)
+train1A <- training[inTrain,]
+train2A <- training[-inTrain,]
+
+# While creating the model, we have to specify 'importance=TRUE' for further ease in Variable-Importance plot.
+# randForMod <- randomForest(classe~., data=train1A)
+randomForMod <- randomForest(classe~., data=train1A, importance=TRUE)
+randomForMod
+
+
+# Testing the above model on train2A  dataset of the training dataset
+train2A_pred <- predict(randomForMod, newdata=train2A)
+
+# Showing the Confusion Matrix here :
+confusionMatrix(train2A_pred, train2A$classe)
+```
+
+Checking Out-of-Sample error
+
+```{r}        
+confM <- confusionMatrix(train2A_pred, train2A$classe)
+sum(diag(confM$table))/sum(confM$table)
+```
+
+Variable-Importance Plot
+
+```{r}
+# Performing the variable importance evaluation function using the above randomForest model:
+# Using 'scale=FALSE' to avoid the automatic normalization done by the varImp() function
+randomfImp <- varImp(randomForMod, scale=FALSE) 
+
+# This gives the plot for the top 25 important variables
+varImpPlot(randomForMod, top=25, main="Top 25 Variable Importance")
+
+# Testing the model on the 'testing' dataset
+testing_pred <- predict(randomForMod, newdata=testing)
+testing_pred
+```
+
+Submit
+
+```{r}
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+
+pml_write_files(as.character(testing_pred))
+```
